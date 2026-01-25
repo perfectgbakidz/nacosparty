@@ -7,3 +7,4 @@ passlib[bcrypt]
 pyjwt
 cryptography
 pydantic
+pydantic[email]
