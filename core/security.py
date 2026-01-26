@@ -1,21 +1,16 @@
-from passlib.context import CryptContext
+import bcrypt
 from datetime import datetime, timedelta
 import jwt
-
 from core.config import JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRE_MINUTES
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 # =========================
 # Password Hashing
 # =========================
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 
 # =========================
