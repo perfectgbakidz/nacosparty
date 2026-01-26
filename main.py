@@ -12,7 +12,7 @@ app = FastAPI(title="NACOS MAPOLY Ticketing API")
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://nacosfresherspartyticket.vercel.app/"],
+    allow_origins=["https://nacosfresherspartyticket.vercel.app"],
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type"],
 )
