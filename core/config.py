@@ -29,4 +29,4 @@ if not FLW_SECRET_HASH:
 # =========================
 QR_SECRET = os.getenv("QR_SECRET")
 if not QR_SECRET:
-    raise RuntimeError("QR_SECRET_KEY is not set")
+    raise RuntimeError("QR_SECRET is not set")

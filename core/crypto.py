@@ -1,10 +1,10 @@
 import json
 from cryptography.fernet import Fernet, InvalidToken
-from core.config import QR_SECRET_KEY
+from core.config import QR_SECRET
 
 
 # Ensure key is bytes
-fernet = Fernet(QR_SECRET_KEY.encode())
+fernet = Fernet(QR_SECRET.encode())
 
 
 def encrypt_qr_payload(ticket_id: str) -> str:
