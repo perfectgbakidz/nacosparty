@@ -24,3 +24,13 @@ class TicketResponse(TicketBase):
     class Config:
         populate_by_name = True
         from_attributes = True
+
+
+class TicketAvailabilityRequest(BaseModel):
+    email: EmailStr
+    phone: str
+
+
+class TicketAvailabilityResponse(BaseModel):
+    available: bool
+    reason: str | None = None

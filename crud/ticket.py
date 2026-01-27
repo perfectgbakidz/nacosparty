@@ -2,6 +2,9 @@ from sqlalchemy.orm import Session
 from models.ticket import Ticket
 
 
+
+
+
 # =========================
 # Create
 # =========================
@@ -52,3 +55,8 @@ def mark_ticket_checked_in(db: Session, ticket: Ticket) -> Ticket:
 def delete_ticket(db: Session, ticket: Ticket):
     db.delete(ticket)
     db.commit()
+
+
+
+
+
