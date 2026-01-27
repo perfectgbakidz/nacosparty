@@ -3,7 +3,8 @@ from datetime import datetime
 from decimal import Decimal
 
 
-class TicketBase(BaseModel):
+class TicketResponse(BaseModel):
+    id: str
     full_name: str = Field(..., alias="fullName")
     email: EmailStr
     phone: str
@@ -11,19 +12,15 @@ class TicketBase(BaseModel):
     level: str
     gender: str
     price: Decimal
+    currency: str
+    payment_status: str = Field(..., alias="paymentStatus")
     purchase_date: datetime = Field(..., alias="purchaseDate")
-    is_checked_in: bool = Field(False, alias="checkedIn")
+    is_checked_in: bool = Field(..., alias="checkedIn")
+    qr_data: str = Field(..., alias="qrData")
 
     class Config:
-        populate_by_name = True
-
-
-class TicketResponse(TicketBase):
-    id: str
-
-    class Config:
-        populate_by_name = True
         from_attributes = True
+        populate_by_name = True
 
 
 class TicketAvailabilityRequest(BaseModel):

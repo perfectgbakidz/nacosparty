@@ -29,8 +29,6 @@ def get_ticket_by_email(db: Session, email: str) -> Ticket | None:
 def get_ticket_by_phone(db: Session, phone: str) -> Ticket | None:
     return db.query(Ticket).filter(Ticket.phone == phone).first()
 
-def get_ticket_by_tx_ref(db: Session, tx_ref: str):
-    return db.query(Ticket).filter(Ticket.tx_ref == tx_ref).first()
 
 def get_all_tickets(db: Session):
     return (
@@ -56,6 +54,9 @@ def mark_ticket_checked_in(db: Session, ticket: Ticket) -> Ticket:
 def delete_ticket(db: Session, ticket: Ticket):
     db.delete(ticket)
     db.commit()
+    
+def get_ticket_by_tx_ref(db: Session, tx_ref: str):
+    return db.query(Ticket).filter(Ticket.tx_ref == tx_ref).first()
 
 
 

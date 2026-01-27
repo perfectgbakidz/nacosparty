@@ -23,52 +23,61 @@ def get_db():
 async def flutterwave_webhook(
     request: Request,
     payload: FlutterwaveWebhookPayload,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    # 🔐 Verify Flutterwave signature
+    # -----------------------
+    # Verify signature
+    # -----------------------
     signature = request.headers.get("verif-hash")
     if signature != FLW_SECRET_HASH:
-        return {"status": "ignored"}  # MUST return 200
+        return {"status": "ignored"}
 
     data = payload.data
 
-    # ✅ Only process successful payments
+    # -----------------------
+    # Only process successful payments
+    # -----------------------
     if data.status != "successful":
         return {"status": "ignored"}
 
-    # 🔁 Idempotency check (prevents duplicates)
-    if get_ticket_by_tx_ref(db, data.tx_ref):
-        return {"status": "already_processed"}
+    # -----------------------
+    # Process all attendees
+    # -----------------------
+    attendees = data.meta.attendees if data.meta else []
 
-    # 🆔 Generate ticket ID
-    ticket_id = generate_ticket_id()
+    tickets_created = []
 
-    # 🧠 Extract meta safely
-    meta = data.meta if data.meta else {}
+    for attendee in attendees:
+        ticket_id = generate_ticket_id()
+        qr_data = encrypt_qr_payload(ticket_id)
 
-    # 💾 Save ticket
-    ticket = create_ticket(
-        db,
-        {
-            "id": ticket_id,
-            "tx_ref": data.tx_ref,
-            "full_name": data.customer.name,
-            "email": data.customer.email,
-            "phone": data.customer.phone_number,
-            "department": meta.get("department", "NACOS"),
-            "level": meta.get("level", "N/A"),
-            "gender": meta.get("gender", "N/A"),
-            "price": data.amount,
-            "currency": data.currency,
-            "payment_status": data.status,  # "successful"
-        }
-    )
+        ticket = create_ticket(
+            db,
+            {
+                "id": ticket_id,
+                "tx_ref": data.tx_ref,
+                "full_name": attendee.full_name,
+                "email": data.customer.email,
+                "phone": data.customer.phone_number or "",
+                "department": attendee.department,
+                "level": attendee.level,
+                "gender": attendee.gender,
+                "price": attendee.price,
+                "currency": data.currency,
+                "payment_status": data.status,
+                "qr_data": qr_data,
+            },
+        )
 
-    # 🔐 Encrypt QR payload (CORRECT)
-    qr_data = encrypt_qr_payload(ticket.id)
+        tickets_created.append({
+            "ticketId": ticket.id,
+            "qrData": qr_data,
+            "full_name": ticket.full_name
+        })
+
+    db.commit()
 
     return {
         "status": "success",
-        "ticketId": ticket.id,
-        "qrData": qr_data
+        "tickets": tickets_created
     }
