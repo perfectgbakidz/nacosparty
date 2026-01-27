@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, Depends
 from sqlalchemy.orm import Session
 
 from schemas.webhook import FlutterwaveWebhookPayload
-from crud.ticket import create_ticket, get_ticket_by_email, get_ticket_by_phone
+from crud.ticket import create_ticket, get_ticket_by_tx_ref
 from core.config import FLW_SECRET_HASH
 from core.crypto import encrypt_qr_payload
 from utils.id_generator import generate_ticket_id
@@ -25,21 +25,19 @@ async def flutterwave_webhook(
     payload: FlutterwaveWebhookPayload,
     db: Session = Depends(get_db)
 ):
+    # 🔐 Verify signature (DO NOT throw)
     signature = request.headers.get("verif-hash")
     if signature != FLW_SECRET_HASH:
-        raise HTTPException(status_code=401, detail="Invalid signature")
+        return {"status": "ignored"}  # Always 200
 
     data = payload.data
 
     if data.status != "successful":
-        return {"message": "Payment not successful"}
+        return {"status": "ignored"}
 
-    # Enforce 1 ticket per person
-    if get_ticket_by_email(db, data.customer.email):
-        return {"message": "Duplicate ticket ignored"}
-
-    if data.customer.phone_number and get_ticket_by_phone(db, data.customer.phone_number):
-        return {"message": "Duplicate ticket ignored"}
+    # 🔁 Idempotency (VERY IMPORTANT)
+    if get_ticket_by_tx_ref(db, data.tx_ref):
+        return {"status": "already_processed"}
 
     ticket_id = generate_ticket_id()
 
@@ -47,6 +45,7 @@ async def flutterwave_webhook(
         db,
         {
             "id": ticket_id,
+            "tx_ref": data.tx_ref,
             "full_name": data.customer.name,
             "email": data.customer.email,
             "phone": data.customer.phone_number or "N/A",
@@ -54,13 +53,15 @@ async def flutterwave_webhook(
             "level": "N/A",
             "gender": "N/A",
             "price": data.amount,
+            "currency": data.currency,
+            "payment_status": "paid",
         }
     )
 
-    encrypted_qr = encrypt_qr_payload(ticket.id)
+    qr_data = encrypt_qr_payload(ticket.id)
 
     return {
-        "message": "Ticket created",
+        "status": "success",
         "ticketId": ticket.id,
-        "qrData": encrypted_qr
+        "qrData": qr_data
     }
