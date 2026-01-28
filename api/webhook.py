@@ -25,28 +25,18 @@ async def flutterwave_webhook(
     payload: FlutterwaveWebhookPayload,
     db: Session = Depends(get_db),
 ):
-    # -----------------------
-    # Verify signature
-    # -----------------------
     signature = request.headers.get("verif-hash")
     if signature != FLW_SECRET_HASH:
         return {"status": "ignored"}
 
     data = payload.data
-
-    # -----------------------
-    # Only process successful payments
-    # -----------------------
     if data.status != "successful":
         return {"status": "ignored"}
 
-    # -----------------------
-    # Process all attendees
-    # -----------------------
-    attendees = data.meta.attendees if data.meta else []
-
     tickets_created = []
 
+    # Loop through all attendees
+    attendees = data.meta.attendees if data.meta else []
     for attendee in attendees:
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
@@ -68,7 +58,6 @@ async def flutterwave_webhook(
                 "qr_data": qr_data,
             },
         )
-
         tickets_created.append({
             "ticketId": ticket.id,
             "qrData": qr_data,
@@ -81,3 +70,4 @@ async def flutterwave_webhook(
         "status": "success",
         "tickets": tickets_created
     }
+
