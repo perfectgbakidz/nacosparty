@@ -7,6 +7,7 @@ from models.ticket import Ticket
 def create_ticket(db: Session, ticket_data: dict) -> Ticket:
     ticket = Ticket(**ticket_data)
     db.add(ticket)
+    db.flush()
     db.refresh(ticket) # Refresh to get updated fields (like purchase_date)
     return ticket
 
