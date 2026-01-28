@@ -4,12 +4,6 @@ from decimal import Decimal
 
 
 class FlutterwaveCustomer(BaseModel):
-    name: strfrom pydantic import BaseModel, EmailStr
-from typing import List, Optional, Any
-from decimal import Decimal
-
-
-class FlutterwaveCustomer(BaseModel):
     name: str
     email: EmailStr
     phone_number: Optional[str] = None
