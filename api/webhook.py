@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from decimal import Decimal
 
 from schemas.webhook import FlutterwaveWebhookPayload
-from crud.ticket import create_ticket, get_ticket_by_tx_ref
+from crud.ticket import create_ticket
 from core.config import FLW_SECRET_HASH
 from core.crypto import encrypt_qr_payload
 from utils.id_generator import generate_ticket_id
@@ -41,52 +41,42 @@ async def flutterwave_webhook(
     if str(data.status).lower() != "successful":
         return {"status": "ignored"}
 
-    # -----------------------------
-    # 3. Prevent duplicate processing
-    # -----------------------------
-    if get_ticket_by_tx_ref(db, str(data.tx_ref)):
-        return {"status": "already_processed"}
-
     tickets_created = []
 
     # -----------------------------
-    # 4. Extract attendees safely
+    # 3. Extract attendees safely
     # -----------------------------
-    attendees = []
-    if data.meta and data.meta.attendees:
-        attendees = data.meta.attendees
+    attendees = data.meta.attendees if data.meta and data.meta.attendees else []
 
     # Fallback: create one ticket if no attendees sent
     if not attendees:
-        attendees = [
-            {
-                "full_name": data.customer.name,
-                "gender": "N/A",
-                "department": "NACOS",
-                "level": "N/A",
-                "price": Decimal(data.amount),
-            }
-        ]
+        attendees = [{"full_name": data.customer.name, "gender": "N/A",
+                      "department": "NACOS", "level": "N/A"}]
+
+    # -----------------------------
+    # 4. Calculate price per attendee
+    # -----------------------------
+    num_attendees = len(attendees)
+    total_amount = Decimal(data.amount)
+    amount_per_attendee = total_amount / num_attendees
 
     # -----------------------------
     # 5. Create tickets
     # -----------------------------
     for attendee in attendees:
-        # attendee IS A DICT — NOT an object
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
 
-        price = (
-            Decimal(attendee.get("price"))
-            if attendee.get("price") is not None
-            else Decimal(data.amount)
-        )
+        price = Decimal(attendee.get("price")) if attendee.get("price") else amount_per_attendee
+
+        # Make tx_ref unique per ticket
+        unique_tx_ref = f"{data.tx_ref}-{ticket_id}"
 
         ticket = create_ticket(
             db,
             {
                 "id": ticket_id,
-                "tx_ref": str(data.tx_ref),
+                "tx_ref": unique_tx_ref,
                 "full_name": attendee.get("full_name"),
                 "email": data.customer.email,
                 "phone": data.customer.phone_number or "",
@@ -100,16 +90,14 @@ async def flutterwave_webhook(
             },
         )
 
-        tickets_created.append(
-            {
-                "ticketId": ticket.id,
-                "qrData": qr_data,
-                "full_name": ticket.full_name,
-            }
-        )
+        tickets_created.append({
+            "ticketId": ticket.id,
+            "qrData": qr_data,
+            "full_name": ticket.full_name,
+        })
 
     # -----------------------------
-    # 6. Commit ONCE
+    # 6. Commit all tickets once
     # -----------------------------
     db.commit()
 
