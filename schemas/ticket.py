@@ -17,6 +17,10 @@ class TicketAttendeeCreate(BaseModel):
     price: Decimal
 
 
+class TicketCreateFromTxRequest(BaseModel):
+    tx_ref: str
+
+
 class TicketCreateRequest(BaseModel):
     tx_ref: str
     email: EmailStr
