@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.orm import Session
 from decimal import Decimal
-import json  # Needed to parse stringified JSON
+import json
 
 from schemas.webhook import FlutterwaveWebhookPayload
 from crud.ticket import create_ticket
@@ -39,30 +39,31 @@ async def flutterwave_webhook(
 
     data = payload.data
 
-    # 2️⃣ Process only successful payments
+    # 2️⃣ Only process successful payments
     if str(data.status).lower() != "successful":
         return {"status": "ignored_not_successful"}
 
+    # 3️⃣ Idempotency check: skip if already processed
+    already_processed = (
+        db.query(Ticket)
+        .filter(Ticket.tx_ref.startswith(data.tx_ref))
+        .first()
+    )
+    if already_processed:
+        return {"status": "already_processed"}
+
     tickets_created = []
 
-    # 3️⃣ Parse meta.attendees (stringified JSON) into list
+    # 4️⃣ Parse attendees from stringified JSON
     attendees = []
     if data.meta and data.meta.attendees:
         try:
-            attendees = json.loads(data.meta.attendees)  # <-- parse string to list
+            attendees = json.loads(data.meta.attendees)
         except Exception:
-            # fallback: single attendee if parsing fails
-            attendees = [{
-                "full_name": data.customer.name,
-                "gender": "N/A",
-                "department": "NACOS",
-                "level": "N/A",
-                "price": Decimal(data.amount),
-                "email": data.customer.email,
-                "phone": data.customer.phone_number or ""
-            }]
-    else:
-        # fallback: single attendee if meta missing
+            attendees = []  # fallback to empty, will handle below
+
+    # 5️⃣ Fallback if no attendees sent
+    if not attendees:
         attendees = [{
             "full_name": data.customer.name,
             "gender": "N/A",
@@ -73,32 +74,30 @@ async def flutterwave_webhook(
             "phone": data.customer.phone_number or ""
         }]
 
-    # 4️⃣ Calculate price per attendee if missing
+    # 6️⃣ Split total amount if individual price missing
     total_amount = Decimal(data.amount)
     num_attendees = len(attendees)
-    if num_attendees == 0:
-        num_attendees = 1  # avoid division by zero
-    split_price = total_amount / num_attendees
+    amount_per_attendee = total_amount / num_attendees
 
-    # 5️⃣ Create tickets
+    # 7️⃣ Create tickets for each attendee
     for attendee in attendees:
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
 
-        price = Decimal(attendee.get("price")) if attendee.get("price") else split_price
+        price = Decimal(attendee.get("price")) if attendee.get("price") else amount_per_attendee
 
         # Make tx_ref unique per ticket
-        stored_tx_ref = f"{data.tx_ref}-{ticket_id}"
+        unique_tx_ref = f"{data.tx_ref}-{ticket_id}"
 
         ticket = create_ticket(
             db,
             {
                 "id": ticket_id,
-                "tx_ref": stored_tx_ref,
-                "full_name": attendee.get("full_name") or data.customer.name,
+                "tx_ref": unique_tx_ref,
+                "full_name": attendee.get("full_name"),
                 "email": attendee.get("email") or data.customer.email,
                 "phone": attendee.get("phone") or data.customer.phone_number or "",
-                "department": attendee.get("department") or "NACOS",
+                "department": attendee.get("department") or "N/A",
                 "level": attendee.get("level") or "N/A",
                 "gender": attendee.get("gender") or "N/A",
                 "price": price,
@@ -111,14 +110,14 @@ async def flutterwave_webhook(
         tickets_created.append({
             "ticketId": ticket.id,
             "full_name": ticket.full_name,
-            "qrData": qr_data
+            "tx_ref": unique_tx_ref
         })
 
-    # 6️⃣ Commit all tickets at once
+    # 8️⃣ Commit all tickets once
     db.commit()
 
     return {
         "status": "success",
         "tickets_created": len(tickets_created),
-        "tickets": tickets_created,
+        "tickets": tickets_created
     }
