@@ -7,21 +7,17 @@ from datetime import datetime
 
 
 # -----------------------------
-# Request Schemas
+# Request Schemas (ADMIN / INTERNAL)
 # -----------------------------
 class TicketAttendeeCreate(BaseModel):
     full_name: str
     gender: Optional[str] = "N/A"
     department: Optional[str] = "NACOS"
     level: Optional[str] = "N/A"
-    price: Decimal
+    price: Optional[Decimal] = None
 
 
-class TicketCreateFromTxRequest(BaseModel):
-    tx_ref: str
-
-
-class TicketCreateRequest(BaseModel):
+class AdminTicketCreateRequest(BaseModel):
     tx_ref: str
     email: EmailStr
     phone: str
