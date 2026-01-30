@@ -1,4 +1,6 @@
-from pydantic import BaseModel, EmailStr, Field
+# schemas/webhook.py
+
+from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Any
 from decimal import Decimal
 
@@ -16,8 +18,9 @@ class AttendeeMeta(BaseModel):
     level: Optional[str] = "N/A"
     price: Optional[Decimal] = None
 
+
 class FlutterwaveMeta(BaseModel):
-    attendees: str = ""  # stringified JSON from frontend
+    attendees: Optional[List[AttendeeMeta]] = []
 
 
 class FlutterwaveData(BaseModel):
