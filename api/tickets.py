@@ -16,10 +16,11 @@ from crud.ticket import (
     get_ticket_by_id,
     get_ticket_by_email,
     get_ticket_by_phone,
-    get_ticket_by_tx_ref,
     get_tickets_by_original_tx_ref,
+    transaction_already_processed,
     delete_ticket
 )
+
 from core.dependencies import super_admin_required
 from core.crypto import encrypt_qr_payload
 from utils.id_generator import generate_ticket_id
