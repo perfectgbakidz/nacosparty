@@ -3,12 +3,11 @@ from sqlalchemy.orm import Session
 from typing import List
 from decimal import Decimal
 
-
 from schemas.ticket import (
     TicketResponse,
     TicketCreateRequest,
     TicketAvailabilityRequest,
-    TicketAvailabilityResponse
+    TicketAvailabilityResponse,
 )
 from crud.ticket import (
     create_ticket,
@@ -18,9 +17,8 @@ from crud.ticket import (
     get_ticket_by_phone,
     get_tickets_by_original_tx_ref,
     transaction_already_processed,
-    delete_ticket
+    delete_ticket,
 )
-
 from core.dependencies import super_admin_required
 from core.crypto import encrypt_qr_payload
 from utils.id_generator import generate_ticket_id
@@ -44,32 +42,37 @@ def get_db():
 # Create Tickets (ADMIN / MANUAL USE ONLY)
 # -----------------------------
 @router.post("", response_model=List[TicketResponse])
-def create_tickets(payload: TicketCreateRequest, db: Session = Depends(get_db)):
+def create_tickets(
+    payload: TicketCreateRequest,
+    db: Session = Depends(get_db),
+):
     """
-    ⚠️ This endpoint should NOT be called by the frontend after payment.
-    Tickets are normally created via Flutterwave webhook.
+    ⚠️ ADMIN / MANUAL endpoint only.
+    Normal ticket creation should happen via payment webhook.
 
-    This is kept for admin/manual creation and is idempotent.
+    This endpoint is IDEMPOTENT:
+    - If tickets already exist for tx_ref, they are returned.
     """
 
-    # 🔒 Prevent duplicate tickets for same transaction
-    existing_tickets = get_ticket_by_tx_ref(db, payload.tx_ref)
-    if existing_tickets:
-        return existing_tickets
+    # 🔒 Prevent duplicate ticket creation
+    if transaction_already_processed(db, payload.tx_ref):
+        return get_tickets_by_original_tx_ref(db, payload.tx_ref)
 
     tickets: List = []
 
     num_attendees = len(payload.attendees)
-    total_amount = sum([Decimal(att.price) for att in payload.attendees])
-    amount_per_attendee = total_amount / num_attendees if num_attendees else Decimal("0")
+    total_amount = sum(Decimal(att.price) for att in payload.attendees)
+    amount_per_attendee = (
+        total_amount / num_attendees if num_attendees else Decimal("0")
+    )
 
     for attendee in payload.attendees:
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
 
-        price = Decimal(attendee.price) if attendee.price else amount_per_attendee
+        price = attendee.price if attendee.price else amount_per_attendee
 
-        # IMPORTANT: mix original tx_ref with ticket id
+        # Mix original tx_ref with ticket ID
         unique_tx_ref = f"{payload.tx_ref}-{ticket_id}"
 
         ticket_data = {
@@ -98,12 +101,20 @@ def create_tickets(payload: TicketCreateRequest, db: Session = Depends(get_db)):
 # Fetch tickets by ORIGINAL tx_ref (PUBLIC)
 # -----------------------------
 @router.get("/by-tx-ref", response_model=List[TicketResponse])
-def fetch_tickets_by_tx_ref(tx_ref: str, db: Session = Depends(get_db)):
+def fetch_tickets_by_tx_ref(
+    tx_ref: str,
+    db: Session = Depends(get_db),
+):
     """
     Used by frontend after successful payment.
     Returns ALL tickets created from the same transaction.
     """
-    return get_ticket_by_tx_ref(db, tx_ref)
+    tickets = get_tickets_by_original_tx_ref(db, tx_ref)
+
+    if not tickets:
+        raise HTTPException(status_code=404, detail="No tickets found for tx_ref")
+
+    return tickets
 
 
 # -----------------------------
@@ -112,7 +123,7 @@ def fetch_tickets_by_tx_ref(tx_ref: str, db: Session = Depends(get_db)):
 @router.get("", response_model=List[TicketResponse])
 def fetch_all_tickets(
     db: Session = Depends(get_db),
-    _: str = Depends(super_admin_required)
+    _: str = Depends(super_admin_required),
 ):
     return get_all_tickets(db)
 
@@ -124,14 +135,13 @@ def fetch_all_tickets(
 def remove_ticket(
     ticket_id: str,
     db: Session = Depends(get_db),
-    _: str = Depends(super_admin_required)
+    _: str = Depends(super_admin_required),
 ):
     ticket = get_ticket_by_id(db, ticket_id)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     delete_ticket(db, ticket)
-    db.commit()
     return {"message": "Ticket deleted"}
 
 
@@ -141,7 +151,7 @@ def remove_ticket(
 @router.post("/check-availability", response_model=TicketAvailabilityResponse)
 def check_ticket_availability(
     payload: TicketAvailabilityRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     if get_ticket_by_email(db, payload.email):
         return {"available": False, "reason": "email_already_used"}
