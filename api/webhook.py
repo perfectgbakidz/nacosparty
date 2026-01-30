@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.orm import Session
 from decimal import Decimal
-import json
 
 from schemas.webhook import FlutterwaveWebhookPayload
 from crud.ticket import create_ticket
@@ -9,14 +8,10 @@ from core.config import FLW_SECRET_HASH
 from core.crypto import encrypt_qr_payload
 from utils.id_generator import generate_ticket_id
 from database.session import SessionLocal
-from models.ticket import Ticket
 
 router = APIRouter(prefix="/api/webhook", tags=["Webhook"])
 
 
-# -----------------------------
-# Database Dependency
-# -----------------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -25,70 +20,56 @@ def get_db():
         db.close()
 
 
-# -----------------------------
-# Flutterwave Webhook
-# -----------------------------
 @router.post("/flutterwave")
 async def flutterwave_webhook(
     request: Request,
     payload: FlutterwaveWebhookPayload,
     db: Session = Depends(get_db),
 ):
-    # 1️⃣ Verify webhook source
+    # -----------------------------
+    # 1. Verify Flutterwave webhook
+    # -----------------------------
     signature = request.headers.get("verif-hash")
     if signature != FLW_SECRET_HASH:
-        return {"status": "ignored_invalid_signature"}
+        return {"status": "ignored"}
 
     data = payload.data
 
-    # 2️⃣ Only process successful payments
+    # -----------------------------
+    # 2. Only process successful payments
+    # -----------------------------
     if str(data.status).lower() != "successful":
-        return {"status": "ignored_not_successful"}
-
-    # 3️⃣ Parse attendees safely
-    attendees = []
-    if data.meta and data.meta.attendees:
-        try:
-            attendees = json.loads(data.meta.attendees)
-        except Exception:
-            attendees = []
-
-    # Fallback: single attendee if meta missing
-    if not attendees:
-        attendees = [{
-            "full_name": data.customer.name,
-            "email": data.customer.email,
-            "phone": data.customer.phone_number or "",
-            "gender": "N/A",
-            "department": "N/A",
-            "level": "N/A",
-            "price": Decimal(data.amount)
-        }]
+        return {"status": "ignored"}
 
     tickets_created = []
 
-    # 4️⃣ Loop through each attendee
+    # -----------------------------
+    # 3. Extract attendees safely
+    # -----------------------------
+    attendees = data.meta.attendees if data.meta and data.meta.attendees else []
+
+    # Fallback: create one ticket if no attendees sent
+    if not attendees:
+        attendees = [{"full_name": data.customer.name, "gender": "N/A",
+                      "department": "NACOS", "level": "N/A"}]
+
+    # -----------------------------
+    # 4. Calculate price per attendee
+    # -----------------------------
+    num_attendees = len(attendees)
+    total_amount = Decimal(data.amount)
+    amount_per_attendee = total_amount / num_attendees
+
+    # -----------------------------
+    # 5. Create tickets
+    # -----------------------------
     for attendee in attendees:
-        # Map frontend keys just in case
-        fname = attendee.get("full_name") or attendee.get("fullName")
-        email = attendee.get("email") or data.customer.email
-        phone = attendee.get("phone") or data.customer.phone_number or ""
-        gender = attendee.get("gender") or "N/A"
-        department = attendee.get("department") or "N/A"
-        level = attendee.get("level") or "N/A"
-        price = Decimal(attendee.get("price", 0)) or (Decimal(data.amount) / len(attendees))
-
-        # 5️⃣ Idempotency check per attendee
-        ticket_exists = db.query(Ticket).filter(
-            Ticket.full_name == fname,
-            Ticket.tx_ref.contains(data.tx_ref)
-        ).first()
-        if ticket_exists:
-            continue  # Skip this attendee if already exists
-
-        # 6️⃣ Generate ticket
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
+
+        price = Decimal(attendee.get("price")) if attendee.get("price") else amount_per_attendee
+
+        # Make tx_ref unique per ticket
         unique_tx_ref = f"{data.tx_ref}-{ticket_id}"
 
         ticket = create_ticket(
@@ -96,27 +77,31 @@ async def flutterwave_webhook(
             {
                 "id": ticket_id,
                 "tx_ref": unique_tx_ref,
-                "full_name": fname,
-                "email": email,
-                "phone": phone,
-                "department": department,
-                "level": level,
-                "gender": gender,
+                "full_name": attendee.get("full_name"),
+                "email": data.customer.email,
+                "phone": data.customer.phone_number or "",
+                "department": attendee.get("department", "N/A"),
+                "level": attendee.get("level", "N/A"),
+                "gender": attendee.get("gender", "N/A"),
                 "price": price,
                 "currency": data.currency,
-                "payment_status": "successful",
+                "payment_status": data.status,
                 "qr_data": qr_data,
             },
         )
+
         tickets_created.append({
             "ticketId": ticket.id,
+            "qrData": qr_data,
             "full_name": ticket.full_name,
-            "qrData": qr_data
         })
 
-    # 7️⃣ Commit all new tickets at once
-    if tickets_created:
-        db.commit()
-        return {"status": "success", "tickets_created": len(tickets_created), "tickets": tickets_created}
+    # -----------------------------
+    # 6. Commit all tickets once
+    # -----------------------------
+    db.commit()
 
-    return {"status": "already_processed"}
+    return {
+        "status": "success",
+        "tickets": tickets_created,
+    }
