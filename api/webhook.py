@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.orm import Session
 from decimal import Decimal
+import json  # <-- Needed to parse stringified JSON
 
 from schemas.webhook import FlutterwaveWebhookPayload
 from crud.ticket import create_ticket
@@ -12,7 +13,6 @@ from models.ticket import Ticket
 
 router = APIRouter(prefix="/api/webhook", tags=["Webhook"])
 
-
 # -----------------------------
 # Database Dependency
 # -----------------------------
@@ -22,7 +22,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
 
 # -----------------------------
 # Flutterwave Webhook
@@ -44,7 +43,7 @@ async def flutterwave_webhook(
     if str(data.status).lower() != "successful":
         return {"status": "ignored_not_successful"}
 
-    # 3️⃣ Idempotency check (prevent duplicate processing)
+    # 3️⃣ Idempotency check
     already_processed = (
         db.query(Ticket)
         .filter(Ticket.tx_ref.startswith(data.tx_ref))
@@ -55,44 +54,60 @@ async def flutterwave_webhook(
 
     tickets_created = []
 
-    # 4️⃣ Get attendees list from meta
-    attendees = data.meta.attendees if data.meta and data.meta.attendees else []
+    # 4️⃣ Parse meta.attendees string to array
+    attendees = []
+    if data.meta and data.meta.attendees:
+        try:
+            # Parse stringified JSON array
+            attendees = json.loads(data.meta.attendees)
+        except Exception as e:
+            # Fallback: if parsing fails, treat as 1 attendee
+            attendees = [{
+                "full_name": data.customer.name,
+                "gender": "N/A",
+                "department": "N/A",
+                "level": "N/A",
+                "price": Decimal(data.amount),
+                "email": data.customer.email,
+                "phone": data.customer.phone_number or ""
+            }]
+    else:
+        # Fallback: 1 attendee
+        attendees = [{
+            "full_name": data.customer.name,
+            "gender": "N/A",
+            "department": "N/A",
+            "level": "N/A",
+            "price": Decimal(data.amount),
+            "email": data.customer.email,
+            "phone": data.customer.phone_number or ""
+        }]
 
-    # If frontend did not send attendees → assume single ticket
-    if not attendees:
-        class FallbackAttendee:
-            full_name = data.customer.name
-            gender = "N/A"
-            department = "N/A"
-            level = "N/A"
-            price = Decimal(data.amount)
-
-        attendees = [FallbackAttendee()]
-
+    # 5️⃣ Split total amount if price missing
     total_amount = Decimal(data.amount)
     split_price = total_amount / len(attendees)
 
-    # 5️⃣ Create tickets
+    # 6️⃣ Create tickets
     for attendee in attendees:
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
 
-        # 🔥 Stored tx_ref = original + ticketId
-        stored_tx_ref = f"{data.tx_ref}-{ticket_id}"
+        price = Decimal(attendee.get("price")) if attendee.get("price") else split_price
 
-        price = Decimal(attendee.price) if attendee.price else split_price
+        # Stored tx_ref = original tx_ref + ticket ID
+        stored_tx_ref = f"{data.tx_ref}-{ticket_id}"
 
         ticket = create_ticket(
             db,
             {
                 "id": ticket_id,
                 "tx_ref": stored_tx_ref,
-                "full_name": attendee.full_name,
-                "email": data.customer.email,
-                "phone": data.customer.phone_number or "",
-                "department": attendee.department,
-                "level": attendee.level,
-                "gender": attendee.gender,
+                "full_name": attendee.get("full_name"),
+                "email": attendee.get("email") or data.customer.email,
+                "phone": attendee.get("phone") or data.customer.phone_number or "",
+                "department": attendee.get("department") or "N/A",
+                "level": attendee.get("level") or "N/A",
+                "gender": attendee.get("gender") or "N/A",
                 "price": price,
                 "currency": data.currency,
                 "payment_status": "successful",
@@ -105,7 +120,7 @@ async def flutterwave_webhook(
             "full_name": ticket.full_name,
         })
 
-    # 6️⃣ Commit once after all tickets
+    # 7️⃣ Commit once
     db.commit()
 
     return {
