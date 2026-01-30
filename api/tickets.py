@@ -3,9 +3,10 @@ from sqlalchemy.orm import Session
 from typing import List
 from decimal import Decimal
 
+
 from schemas.ticket import (
     TicketResponse,
-    TicketCreateRequest,
+    AdminTicketCreateRequest as TicketCreateRequest,
     TicketAvailabilityRequest,
     TicketAvailabilityResponse,
 )
