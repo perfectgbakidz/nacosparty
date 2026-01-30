@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from decimal import Decimal
 
+
 from schemas.ticket import (
     TicketResponse,
     TicketCreateRequest,
@@ -16,6 +17,7 @@ from crud.ticket import (
     get_ticket_by_email,
     get_ticket_by_phone,
     get_ticket_by_tx_ref,
+    get_tickets_by_original_tx_ref,
     delete_ticket
 )
 from core.dependencies import super_admin_required
