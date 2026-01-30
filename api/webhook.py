@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.orm import Session
 from decimal import Decimal
-import json
+import json  # Needed to parse stringified JSON
 
 from schemas.webhook import FlutterwaveWebhookPayload
 from crud.ticket import create_ticket
@@ -13,6 +13,9 @@ from models.ticket import Ticket
 
 router = APIRouter(prefix="/api/webhook", tags=["Webhook"])
 
+# -----------------------------
+# Database Dependency
+# -----------------------------
 def get_db():
     db = SessionLocal()
     try:
@@ -20,60 +23,71 @@ def get_db():
     finally:
         db.close()
 
+# -----------------------------
+# Flutterwave Webhook
+# -----------------------------
 @router.post("/flutterwave")
 async def flutterwave_webhook(
     request: Request,
     payload: FlutterwaveWebhookPayload,
     db: Session = Depends(get_db),
 ):
+    # 1️⃣ Verify webhook source
     signature = request.headers.get("verif-hash")
     if signature != FLW_SECRET_HASH:
         return {"status": "ignored_invalid_signature"}
 
     data = payload.data
 
+    # 2️⃣ Process only successful payments
     if str(data.status).lower() != "successful":
         return {"status": "ignored_not_successful"}
 
-    # Idempotency check
-    already_processed = (
-        db.query(Ticket)
-        .filter(Ticket.tx_ref.startswith(data.tx_ref))
-        .first()
-    )
-    if already_processed:
-        return {"status": "already_processed"}
-
     tickets_created = []
 
-    # Parse attendees string
+    # 3️⃣ Parse meta.attendees (stringified JSON) into list
     attendees = []
     if data.meta and data.meta.attendees:
         try:
-            attendees = json.loads(data.meta.attendees)
+            attendees = json.loads(data.meta.attendees)  # <-- parse string to list
         except Exception:
-            attendees = []
-
-    # Fallback: if no attendees, create 1
-    if not attendees:
+            # fallback: single attendee if parsing fails
+            attendees = [{
+                "full_name": data.customer.name,
+                "gender": "N/A",
+                "department": "NACOS",
+                "level": "N/A",
+                "price": Decimal(data.amount),
+                "email": data.customer.email,
+                "phone": data.customer.phone_number or ""
+            }]
+    else:
+        # fallback: single attendee if meta missing
         attendees = [{
             "full_name": data.customer.name,
             "gender": "N/A",
-            "department": "N/A",
+            "department": "NACOS",
             "level": "N/A",
             "price": Decimal(data.amount),
             "email": data.customer.email,
             "phone": data.customer.phone_number or ""
         }]
 
-    # Split total amount if price missing
+    # 4️⃣ Calculate price per attendee if missing
     total_amount = Decimal(data.amount)
-    split_price = total_amount / len(attendees)
+    num_attendees = len(attendees)
+    if num_attendees == 0:
+        num_attendees = 1  # avoid division by zero
+    split_price = total_amount / num_attendees
 
+    # 5️⃣ Create tickets
     for attendee in attendees:
         ticket_id = generate_ticket_id()
         qr_data = encrypt_qr_payload(ticket_id)
+
         price = Decimal(attendee.get("price")) if attendee.get("price") else split_price
+
+        # Make tx_ref unique per ticket
         stored_tx_ref = f"{data.tx_ref}-{ticket_id}"
 
         ticket = create_ticket(
@@ -81,10 +95,10 @@ async def flutterwave_webhook(
             {
                 "id": ticket_id,
                 "tx_ref": stored_tx_ref,
-                "full_name": attendee.get("full_name"),
+                "full_name": attendee.get("full_name") or data.customer.name,
                 "email": attendee.get("email") or data.customer.email,
                 "phone": attendee.get("phone") or data.customer.phone_number or "",
-                "department": attendee.get("department") or "N/A",
+                "department": attendee.get("department") or "NACOS",
                 "level": attendee.get("level") or "N/A",
                 "gender": attendee.get("gender") or "N/A",
                 "price": price,
@@ -97,8 +111,10 @@ async def flutterwave_webhook(
         tickets_created.append({
             "ticketId": ticket.id,
             "full_name": ticket.full_name,
+            "qrData": qr_data
         })
 
+    # 6️⃣ Commit all tickets at once
     db.commit()
 
     return {
