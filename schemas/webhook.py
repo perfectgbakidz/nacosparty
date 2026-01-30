@@ -16,9 +16,8 @@ class AttendeeMeta(BaseModel):
     level: Optional[str] = "N/A"
     price: Optional[Decimal] = None
 
-
 class FlutterwaveMeta(BaseModel):
-    attendees: List[AttendeeMeta] = Field(default_factory=list)
+    attendees: str = ""  # stringified JSON from frontend
 
 
 class FlutterwaveData(BaseModel):
